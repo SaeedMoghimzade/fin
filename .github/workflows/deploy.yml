@@ -1,45 +1,90 @@
-name: Deploy to GitHub Pages
+name: Web + Android CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  deploy:
+
+  deploy-web:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+      - run: npm run build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+      - uses: actions/deploy-pages@v4
+
+
+  build-android:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
+      - run: npm run build
 
-      - name: Build
-        run: npm run build
+      # نصب Capacitor داخل CI
+      - run: npm install @capacitor/core @capacitor/cli @capacitor/android
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      # init پروژه capacitor
+      - run: npx cap init finance com.finance --web-dir=dist
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+      # ساخت android project
+      - run: npx cap add android
+      - name: Force Kotlin version
+        run: |
+          cat <<'EOF' >> android/build.gradle
+          allprojects {
+              configurations.all {
+                  resolutionStrategy.eachDependency { details ->
+                      if (details.requested.group == "org.jetbrains.kotlin") {
+                          details.useVersion "1.8.22"
+                      }
+                  }
+              }
+          }
+          EOF
+      # sync فایل‌ها
+      - run: npx cap sync android
+
+      # جاوا
+      - uses: actions/setup-java@v4
         with:
-          path: dist
+          distribution: temurin
+          java-version: 21
 
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
+      # build apk
+      - run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 2
