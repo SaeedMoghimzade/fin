@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Debt, Member, RepaymentMethod, Installment } from '../types';
-import { addJalaliMonth } from '../utils/dateUtils';
+import { addJalaliMonth, formatNumberWithCommas, parseFormattedNumber } from '../utils/dateUtils';
 import JalaliDatePicker from './JalaliDatePicker';
 
 interface DebtFormProps {
@@ -62,10 +62,15 @@ const DebtForm: React.FC<DebtFormProps> = ({ debt, members, onSave, onCancel }) 
       memberId,
       repaymentMethod: method,
       startDate: startDate,
-      installments: debt?.installments.length === installments.length ? debt.installments : installments,
+      installments: (debt && debt.installments.length === installments.length && debt.totalAmount === totalAmount) ? debt.installments : installments,
       description,
       createdAt: debt?.createdAt || new Date().toISOString()
     });
+  };
+
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setTotalAmount(parseFormattedNumber(val));
   };
 
   return (
@@ -98,10 +103,12 @@ const DebtForm: React.FC<DebtFormProps> = ({ debt, members, onSave, onCancel }) 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">کل بدهی (تومان)</label>
             <input
-              type="number"
-              value={totalAmount}
-              onChange={(e) => setTotalAmount(Number(e.target.value))}
-              className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+              type="text"
+              inputMode="numeric"
+              value={formatNumberWithCommas(totalAmount)}
+              onChange={handleAmountChange}
+              className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-left dir-ltr"
+              placeholder="۰"
               required
             />
           </div>

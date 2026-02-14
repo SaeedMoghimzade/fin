@@ -8,6 +8,7 @@ import DebtForm from './components/DebtForm';
 import IncomeForm from './components/IncomeForm';
 import Reports from './components/Reports';
 import InstallmentManager from './components/InstallmentManager';
+import ConfirmModal from './components/ConfirmModal';
 import { Member, Asset, Debt, RecurringIncome, AppView } from './types';
 import { dbService, STORES } from './db';
 import { X, Users, Wallet, CreditCard, Banknote, ListOrdered, Edit3, Trash2, PlusCircle } from 'lucide-react';
@@ -25,17 +26,36 @@ const App: React.FC = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [viewingDebtId, setViewingDebtId] = useState<string | null>(null);
 
+  // State for Custom Confirm Modal
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    store: string;
+    id: string;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    store: '',
+    id: '',
+    title: '',
+    message: ''
+  });
+
   const fetchData = useCallback(async () => {
-    const [m, a, d, i] = await Promise.all([
-      dbService.getAll<Member>(STORES.MEMBERS),
-      dbService.getAll<Asset>(STORES.ASSETS),
-      dbService.getAll<Debt>(STORES.DEBTS),
-      dbService.getAll<RecurringIncome>(STORES.INCOME)
-    ]);
-    setMembers(m || []);
-    setAssets(a || []);
-    setDebts(d || []);
-    setIncomes(i || []);
+    try {
+      const [m, a, d, i] = await Promise.all([
+        dbService.getAll<Member>(STORES.MEMBERS),
+        dbService.getAll<Asset>(STORES.ASSETS),
+        dbService.getAll<Debt>(STORES.DEBTS),
+        dbService.getAll<RecurringIncome>(STORES.INCOME)
+      ]);
+      setMembers(m || []);
+      setAssets(a || []);
+      setDebts(d || []);
+      setIncomes(i || []);
+    } catch (error) {
+      console.error("Failed to fetch data", error);
+    }
   }, []);
 
   useEffect(() => {
@@ -82,10 +102,25 @@ const App: React.FC = () => {
     setEditingItem(null);
   };
 
-  const handleDelete = async (store: string, id: string) => {
-    if (confirm('آیا از حذف این مورد اطمینان دارید؟')) {
+  const prepareDelete = (e: React.MouseEvent, store: string, id: string, name: string) => {
+    e.stopPropagation();
+    setConfirmState({
+      isOpen: true,
+      store,
+      id,
+      title: 'حذف اطلاعات',
+      message: `آیا از حذف "${name}" اطمینان دارید؟ این عملیات غیرقابل بازگشت است.`
+    });
+  };
+
+  const executeDelete = async () => {
+    const { store, id } = confirmState;
+    try {
       await dbService.delete(store, id);
-      fetchData();
+      await fetchData();
+      setConfirmState(prev => ({ ...prev, isOpen: false }));
+    } catch (error) {
+      console.error("Delete error", error);
     }
   };
 
@@ -137,7 +172,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="flex gap-2">
                     <button onClick={() => { setEditingItem(m); setIsFormOpen(true); }} className="p-2 text-indigo-600 bg-indigo-50 rounded-lg"><Edit3 className="w-4 h-4" /></button>
-                    <button onClick={() => handleDelete(STORES.MEMBERS, m.id)} className="p-2 text-red-500 bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={(e) => prepareDelete(e, STORES.MEMBERS, m.id, m.name)} className="p-2 text-red-500 bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 </div>
               ))}
@@ -169,7 +204,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="flex gap-2 justify-end pt-2 border-t border-gray-50 mt-2">
                     <button onClick={() => { setEditingItem(a); setIsFormOpen(true); }} className="text-xs text-indigo-600 font-bold px-3 py-1 bg-indigo-50 rounded-lg">ویرایش</button>
-                    <button onClick={() => handleDelete(STORES.ASSETS, a.id)} className="text-xs text-red-500 font-bold px-3 py-1 bg-red-50 rounded-lg">حذف</button>
+                    <button onClick={(e) => prepareDelete(e, STORES.ASSETS, a.id, a.name)} className="text-xs text-red-500 font-bold px-3 py-1 bg-red-50 rounded-lg">حذف</button>
                   </div>
                 </div>
               ))}
@@ -204,7 +239,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="flex gap-2 justify-end pt-2 border-t border-gray-50 mt-2">
                     <button onClick={() => { setEditingItem(inc); setIsFormOpen(true); }} className="text-xs text-indigo-600 font-bold px-3 py-1 bg-indigo-50 rounded-lg">ویرایش</button>
-                    <button onClick={() => handleDelete(STORES.INCOME, inc.id)} className="text-xs text-red-500 font-bold px-3 py-1 bg-red-50 rounded-lg">حذف</button>
+                    <button onClick={(e) => prepareDelete(e, STORES.INCOME, inc.id, inc.name)} className="text-xs text-red-500 font-bold px-3 py-1 bg-red-50 rounded-lg">حذف</button>
                   </div>
                 </div>
               ))}
@@ -226,9 +261,9 @@ const App: React.FC = () => {
                 const totalCount = d.installments.length;
                 const progress = totalCount > 0 ? (paidCount / totalCount) * 100 : 0;
                 return (
-                  <div key={d.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+                  <div key={d.id} onClick={() => setViewingDebtId(d.id)} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm cursor-pointer active:scale-[0.98] transition-transform">
                     <div className="flex justify-between items-start mb-2">
-                      <div onClick={() => setViewingDebtId(d.id)} className="cursor-pointer flex-1">
+                      <div className="flex-1">
                         <h4 className="font-bold text-gray-800">{d.name}</h4>
                         <p className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-full inline-block mt-1">
                           بدهکار: {members.find(m => m.id === d.memberId)?.name}
@@ -248,11 +283,11 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex gap-2 justify-end pt-3 border-t border-gray-50 mt-3">
-                      <button onClick={() => setViewingDebtId(d.id)} className="flex items-center gap-1 text-xs text-amber-700 font-bold px-3 py-1 bg-amber-50 rounded-lg">
+                      <button onClick={(e) => { e.stopPropagation(); setViewingDebtId(d.id); }} className="flex items-center gap-1 text-xs text-amber-700 font-bold px-3 py-1 bg-amber-50 rounded-lg">
                         <ListOrdered className="w-4 h-4" /> مدیریت اقساط
                       </button>
-                      <button onClick={() => { setEditingItem(d); setIsFormOpen(true); }} className="text-xs text-indigo-600 font-bold px-3 py-1 bg-indigo-50 rounded-lg">ویرایش</button>
-                      <button onClick={() => handleDelete(STORES.DEBTS, d.id)} className="text-xs text-red-500 font-bold px-3 py-1 bg-red-50 rounded-lg">حذف</button>
+                      <button onClick={(e) => { e.stopPropagation(); setEditingItem(d); setIsFormOpen(true); }} className="text-xs text-indigo-600 font-bold px-3 py-1 bg-indigo-50 rounded-lg">ویرایش</button>
+                      <button onClick={(e) => prepareDelete(e, STORES.DEBTS, d.id, d.name)} className="text-xs text-red-500 font-bold px-3 py-1 bg-red-50 rounded-lg">حذف</button>
                     </div>
                   </div>
                 );
@@ -263,7 +298,7 @@ const App: React.FC = () => {
         );
 
       case 'REPORTS':
-        return <Reports members={members} assets={assets} debts={debts} incomes={incomes} />;
+        return <Reports members={members} assets={assets} debts={debts} incomes={incomes} onRefresh={fetchData} />;
 
       default:
         return <div>در حال توسعه...</div>;
@@ -278,6 +313,14 @@ const App: React.FC = () => {
       isAddMenuOpen={isAddMenuOpen}
     >
       {renderContent()}
+
+      <ConfirmModal
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={executeDelete}
+        onCancel={() => setConfirmState(prev => ({ ...prev, isOpen: false }))}
+      />
 
       {isAddMenuOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center px-4 pb-20 sm:pb-4">

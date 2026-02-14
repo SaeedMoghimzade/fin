@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RecurringIncome, Member } from '../types';
+import { formatNumberWithCommas, parseFormattedNumber } from '../utils/dateUtils';
 
 interface IncomeFormProps {
   income?: RecurringIncome | null;
@@ -40,6 +41,11 @@ const IncomeForm: React.FC<IncomeFormProps> = ({ income, members, onSave, onCanc
     });
   };
 
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setAmount(parseFormattedNumber(val));
+  };
+
   return (
     <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
       <h3 className="text-lg font-bold mb-4">{income ? 'ویرایش درآمد' : 'ثبت درآمد مستمر جدید'}</h3>
@@ -70,10 +76,12 @@ const IncomeForm: React.FC<IncomeFormProps> = ({ income, members, onSave, onCanc
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">مبلغ (تومان)</label>
             <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
-              className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+              type="text"
+              inputMode="numeric"
+              value={formatNumberWithCommas(amount)}
+              onChange={handleAmountChange}
+              className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-left dir-ltr"
+              placeholder="۰"
               required
             />
           </div>

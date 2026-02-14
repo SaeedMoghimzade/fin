@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Debt, Installment } from '../types';
-import { toJalaliString, formatCurrency } from '../utils/dateUtils';
+import { toJalaliString, formatCurrency, formatNumberWithCommas, parseFormattedNumber } from '../utils/dateUtils';
 import { CheckCircle2, Circle, Edit2, Check, X } from 'lucide-react';
 
 interface InstallmentManagerProps {
@@ -14,7 +14,6 @@ const InstallmentManager: React.FC<InstallmentManagerProps> = ({ debt, onUpdate,
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState<number>(0);
 
-  // Fix: Explicitly type updatedInstallments and ensure status uses the defined literal union types
   const toggleStatus = (instId: string) => {
     const updatedInstallments: Installment[] = debt.installments.map(inst => 
       inst.id === instId 
@@ -29,16 +28,17 @@ const InstallmentManager: React.FC<InstallmentManagerProps> = ({ debt, onUpdate,
     setEditAmount(inst.amount);
   };
 
-  // Fix: Explicitly type updatedInstallments to avoid implicit widening of the status field
   const saveAmount = (instId: string) => {
     const updatedInstallments: Installment[] = debt.installments.map(inst => 
       inst.id === instId ? { ...inst, amount: editAmount } : inst
     );
-    // Recalculate total amount of debt based on installments if needed, 
-    // but usually totalAmount is the reference. Let's keep totalAmount as sum for consistency if installments change.
     const newTotal = updatedInstallments.reduce((sum, i) => sum + i.amount, 0);
     onUpdate({ ...debt, installments: updatedInstallments, totalAmount: newTotal });
     setEditingId(null);
+  };
+
+  const handleEditAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditAmount(parseFormattedNumber(e.target.value));
   };
 
   return (
@@ -79,10 +79,11 @@ const InstallmentManager: React.FC<InstallmentManagerProps> = ({ debt, onUpdate,
                 {editingId === inst.id ? (
                   <div className="flex items-center gap-2">
                     <input 
-                      type="number"
-                      value={editAmount}
-                      onChange={(e) => setEditAmount(Number(e.target.value))}
-                      className="w-24 p-1 border rounded text-sm text-left outline-none focus:ring-1 focus:ring-indigo-500"
+                      type="text"
+                      inputMode="numeric"
+                      value={formatNumberWithCommas(editAmount)}
+                      onChange={handleEditAmountChange}
+                      className="w-32 p-1 border rounded text-sm text-left outline-none focus:ring-1 focus:ring-indigo-500 dir-ltr"
                       autoFocus
                     />
                     <button onClick={() => saveAmount(inst.id)} className="p-1 bg-green-500 text-white rounded">

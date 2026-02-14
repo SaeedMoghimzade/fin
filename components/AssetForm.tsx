@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Asset, Member, AssetType } from '../types';
+import { formatNumberWithCommas, parseFormattedNumber } from '../utils/dateUtils';
 
 interface AssetFormProps {
   asset?: Asset | null;
@@ -39,6 +40,11 @@ const AssetForm: React.FC<AssetFormProps> = ({ asset, members, onSave, onCancel 
       description,
       createdAt: asset?.createdAt || new Date().toISOString()
     });
+  };
+
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setAmount(parseFormattedNumber(val));
   };
 
   const assetTypes: { value: AssetType; label: string }[] = [
@@ -90,10 +96,12 @@ const AssetForm: React.FC<AssetFormProps> = ({ asset, members, onSave, onCancel 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">مبلغ (تومان)</label>
             <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
-              className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+              type="text"
+              inputMode="numeric"
+              value={formatNumberWithCommas(amount)}
+              onChange={handleAmountChange}
+              className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-left dir-ltr"
+              placeholder="۰"
               required
             />
           </div>

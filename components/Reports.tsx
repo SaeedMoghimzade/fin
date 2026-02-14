@@ -1,20 +1,23 @@
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Asset, Debt, Member, RecurringIncome } from '../types';
-import { formatCurrency, getJalaliMonthYear, toJalali, toGregorian, addJalaliMonth } from '../utils/dateUtils';
+import { formatCurrency, getJalaliMonthYear, toJalali, addJalaliMonth } from '../utils/dateUtils';
+import { dbService, STORES } from '../db';
+import ConfirmModal from './ConfirmModal';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle } from 'lucide-react';
 
 interface ReportsProps {
   members: Member[];
   assets: Asset[];
   debts: Debt[];
   incomes: RecurringIncome[];
+  onRefresh: () => Promise<void>;
 }
 
 interface MonthlyData {
-  sortKey: string; // YYYY/MM for sorting
-  displayName: string; // "Month YYYY" for display
+  sortKey: string;
+  displayName: string;
   total: number;
   paid: number;
   pending: number;
@@ -26,16 +29,19 @@ interface MonthlyData {
   }[];
 }
 
-const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) => {
+const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRefresh }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error' | null, message: string }>({ type: null, message: '' });
+  
   const now = new Date();
   const todayISO = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 
-  // 1. Generate the specific 6-month range: [Prev, Current, Next, Next+1, Next+2, Next+3]
-  // We'll use the first day of each month to generate display names and sort keys
-  const targetMonths: string[] = []; // Stores sortKeys like "1403/02"
-  const monthKeysToData: Record<string, string> = {}; // sortKey -> displayName
+  // 1. Generate the specific 6-month range
+  const targetMonths: string[] = [];
+  const monthKeysToData: Record<string, string> = {};
 
-  // Start from previous month (-1) to 4 months in future (+4)
   for (let i = -1; i <= 4; i++) {
     const dateOfTargetMonth = addJalaliMonth(now.toISOString(), i);
     const [jy, jm] = toJalali(dateOfTargetMonth);
@@ -47,8 +53,6 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
 
   const monthlyBreakdown: Record<string, MonthlyData> = {};
   
-  // Initialize buckets for all months found in debts plus the target range
-  // We want to see the specific 6 months in chart, but maybe more in the list
   debts.forEach(debt => {
     debt.installments.forEach(inst => {
       const [jy, jm] = toJalali(inst.dueDate);
@@ -88,7 +92,6 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
     });
   });
 
-  // Prepare Chart Data specifically for the 6-month window requested
   const chartData = targetMonths.map(key => {
     const data = monthlyBreakdown[key] || {
       displayName: monthKeysToData[key],
@@ -104,11 +107,93 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
     };
   });
 
-  // Sorted months for the detailed list (all of them)
   const sortedMonthsForList = Object.keys(monthlyBreakdown).sort((a, b) => a.localeCompare(b));
 
+  const handleExportData = () => {
+    const backupData = {
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      data: { members, assets, debts, incomes }
+    };
+    
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `finance_backup_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setPendingFile(file);
+    setShowConfirm(true);
+    setImportStatus({ type: null, message: '' });
+    event.target.value = '';
+  };
+
+  const executeImport = async () => {
+    if (!pendingFile) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const json = JSON.parse(e.target?.result as string);
+        if (!json.data || !json.data.members) throw new Error('فرمت فایل نامعتبر است.');
+
+        await Promise.all([
+          dbService.clearStore(STORES.MEMBERS),
+          dbService.clearStore(STORES.ASSETS),
+          dbService.clearStore(STORES.DEBTS),
+          dbService.clearStore(STORES.INCOME),
+        ]);
+
+        const { members: m, assets: a, debts: d, incomes: i } = json.data;
+        for (const item of m) await dbService.put(STORES.MEMBERS, item);
+        for (const item of a) await dbService.put(STORES.ASSETS, item);
+        for (const item of d) await dbService.put(STORES.DEBTS, item);
+        for (const item of i) await dbService.put(STORES.INCOME, item);
+
+        await onRefresh();
+        setImportStatus({ type: 'success', message: 'اطلاعات با موفقیت بازیابی شد.' });
+        setTimeout(() => setImportStatus({ type: null, message: '' }), 5000);
+      } catch (err) {
+        setImportStatus({ type: 'error', message: 'خطا: ' + (err as Error).message });
+      }
+    };
+    reader.readAsText(pendingFile);
+    setShowConfirm(false);
+    setPendingFile(null);
+  };
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-10">
+      <ConfirmModal 
+        isOpen={showConfirm}
+        title="بازیابی داده‌ها"
+        message="با تایید این عملیات، تمام اطلاعات فعلی شما پاک شده و اطلاعات فایل جایگزین آن خواهد شد. آیا مطمئن هستید؟"
+        confirmText="تایید و جایگزینی"
+        onConfirm={executeImport}
+        onCancel={() => { setShowConfirm(false); setPendingFile(null); }}
+      />
+
+      {importStatus.type && (
+        <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 ${
+          importStatus.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'
+        }`}>
+          {importStatus.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+          <p className="text-sm font-bold">{importStatus.message}</p>
+        </div>
+      )}
+
       <div>
         <h3 className="text-lg font-bold mb-4">وضعیت بازپرداخت‌ها (بازه ۶ ماهه)</h3>
         <div className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 h-80">
@@ -140,7 +225,7 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
         <div className="space-y-4">
           {sortedMonthsForList.map(key => {
             const data = monthlyBreakdown[key];
-            const isCurrentMonth = key === targetMonths[1]; // Index 1 is current month in our loop
+            const isCurrentMonth = key === targetMonths[1];
 
             return (
               <details key={key} className={`group bg-white rounded-2xl border ${isCurrentMonth ? 'border-indigo-200 ring-1 ring-indigo-50' : 'border-gray-100'} shadow-sm overflow-hidden`}>
@@ -153,17 +238,12 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
                     <div className="flex flex-wrap gap-2 mt-2">
                       {data.paid > 0 && (
                         <span className="text-[10px] bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-100">
-                          پرداخت شده: {formatCurrency(data.paid)}
+                          پرداخت: {formatCurrency(data.paid)}
                         </span>
                       )}
                       {data.overdue > 0 && (
                         <span className="text-[10px] bg-red-50 text-red-700 px-2 py-0.5 rounded-full border border-red-100">
                           معوق: {formatCurrency(data.overdue)}
-                        </span>
-                      )}
-                      {data.pending > 0 && (
-                        <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
-                          آینده: {formatCurrency(data.pending)}
                         </span>
                       )}
                     </div>
@@ -187,10 +267,10 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
                           {detail.name}
                         </span>
                       </div>
-                      <span className={`text-sm ${
+                      <span className={`text-sm font-bold ${
                         detail.status === 'PAID' ? 'text-green-600' : 
-                        detail.status === 'OVERDUE' ? 'text-red-600 font-bold' : 
-                        'text-gray-900 font-bold'
+                        detail.status === 'OVERDUE' ? 'text-red-600' : 
+                        'text-gray-900'
                       }`}>
                         {formatCurrency(detail.amount)}
                       </span>
@@ -200,11 +280,51 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes }) =>
               </details>
             );
           })}
-          {sortedMonthsForList.length === 0 && (
-            <div className="bg-gray-50 p-8 rounded-3xl border border-dashed border-gray-200 text-center">
-              <p className="text-gray-400 text-sm">هنوز هیچ بدهی یا قسطی ثبت نشده است.</p>
+        </div>
+      </div>
+
+      <div className="pt-6 border-t border-gray-200">
+        <div className="bg-indigo-50 rounded-[2.5rem] p-6 border border-indigo-100/50">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-indigo-600 p-2 rounded-xl">
+              <Database className="text-white w-5 h-5" />
             </div>
-          )}
+            <h3 className="text-lg font-black text-indigo-900">مدیریت داده‌ها</h3>
+          </div>
+          
+          <p className="text-xs text-indigo-700/70 mb-6 leading-relaxed">
+            شما می‌توانید از تمام اطلاعات ثبت شده خود یک فایل پشتیبان بگیرید یا داده‌های قبلی خود را از طریق فایل بازیابی کنید.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <button 
+              onClick={handleExportData}
+              className="flex items-center justify-center gap-2 bg-white text-indigo-700 py-4 px-2 rounded-2xl font-bold shadow-sm border border-indigo-100 active:scale-95 transition-all"
+            >
+              <Download className="w-5 h-5" />
+              <span className="text-sm">خروجی داده</span>
+            </button>
+            
+            <button 
+              onClick={handleImportClick}
+              className="flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 px-2 rounded-2xl font-bold shadow-md active:scale-95 transition-all"
+            >
+              <Upload className="w-5 h-5" />
+              <span className="text-sm">وارد کردن فایل</span>
+            </button>
+          </div>
+          
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+            accept=".json" 
+            className="hidden" 
+          />
+          
+          <p className="text-center text-[10px] text-indigo-400 mt-6">
+            پیشنهاد می‌شود به صورت دوره‌ای از داده‌های خود نسخه پشتیبان تهیه کنید.
+          </p>
         </div>
       </div>
     </div>
