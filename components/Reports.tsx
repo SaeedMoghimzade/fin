@@ -5,7 +5,7 @@ import { formatCurrency, getJalaliMonthYear, toJalali, addJalaliMonth } from '..
 import { dbService, STORES } from '../db';
 import ConfirmModal from './ConfirmModal';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle, Copy } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle, Copy, Share2 } from 'lucide-react';
 
 interface ReportsProps {
   members: Member[];
@@ -33,7 +33,7 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error' | null, message: string }>({ type: null, message: '' });
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error' | 'info' | null, message: string }>({ type: null, message: '' });
   
   const now = new Date();
   const todayISO = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -109,7 +109,14 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
 
   const sortedMonthsForList = Object.keys(monthlyBreakdown).sort((a, b) => a.localeCompare(b));
 
+  const showStatus = (type: 'success' | 'error' | 'info', message: string, duration = 4000) => {
+    setImportStatus({ type, message });
+    setTimeout(() => setImportStatus({ type: null, message: '' }), duration);
+  };
+
   const handleExportData = async () => {
+    showStatus('info', 'در حال آماده‌سازی فایل پشتیبان...');
+    
     const backupData = {
       version: '1.0',
       timestamp: new Date().toISOString(),
@@ -119,57 +126,68 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     const fileName = `finance_backup_${new Date().toISOString().split('T')[0]}.json`;
     const jsonString = JSON.stringify(backupData, null, 2);
 
-    // Function to fallback to legacy download
-    const fallbackDownload = () => {
-      try {
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      } catch (e) {
-        setImportStatus({ type: 'error', message: 'خطا در ایجاد فایل دانلود.' });
-      }
-    };
-
-    // Try Share API first - Better for Android/iOS
+    // Try Share API (Recommended for Android/Capacitor)
     if (navigator.share) {
       try {
         const file = new File([jsonString], fileName, { type: 'application/json' });
-        // Many Android browsers fail here with "Permission Denied" if not strictly configured
+        
+        // Attempt to share as file
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({
             files: [file],
             title: 'پشتیبان مدیریت مالی',
-            text: 'فایل پشتیبان اطلاعات مالی خانواده'
           });
+          showStatus('success', 'فایل پشتیبان با موفقیت به اشتراک گذاشته شد.');
           return;
-        } else {
-          // If file sharing not supported, fallback to traditional download
-          fallbackDownload();
+        } 
+        
+        // If file share not allowed, attempt to share as TEXT (very reliable on Android)
+        await navigator.share({
+          title: 'اطلاعات مالی (JSON)',
+          text: jsonString
+        });
+        showStatus('success', 'اطلاعات به صورت متن به اشتراک گذاشته شد.');
+        return;
+
+      } catch (err: any) {
+        console.error('Share failed:', err);
+        // If user cancelled, don't show error
+        if (err.name === 'AbortError') {
+          setImportStatus({ type: null, message: '' });
           return;
         }
-      } catch (err) {
-        console.error('Sharing failed:', err);
-        // If sharing failed (like Permission Denied), try regular download
-        fallbackDownload();
-        return;
+        // If permission denied or other, fallback to download
       }
     }
 
-    // Default to legacy download for desktop browsers
-    fallbackDownload();
+    // Fallback: Legacy Web Download
+    try {
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showStatus('success', 'فایل در پوشه دانلودها ذخیره شد.');
+    } catch (e) {
+      showStatus('error', 'خطا در تولید فایل. لطفاً از گزینه "کپی در حافظه" استفاده کنید.');
+    }
   };
 
   const copyToClipboard = () => {
-    const backupData = JSON.stringify({ members, assets, debts, incomes });
+    const backupData = JSON.stringify({ 
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      data: { members, assets, debts, incomes } 
+    });
+    
     navigator.clipboard.writeText(backupData).then(() => {
-      setImportStatus({ type: 'success', message: 'داده‌ها در حافظه کپی شدند. می‌توانید آن را جایی ذخیره کنید.' });
-      setTimeout(() => setImportStatus({ type: null, message: '' }), 3000);
+      showStatus('success', 'تمام داده‌ها در حافظه کپی شد. می‌توانید آن را در یک یادداشت ذخیره کنید.');
+    }).catch(() => {
+      showStatus('error', 'خطا در دسترسی به حافظه موقت گوشی.');
     });
   };
 
@@ -193,7 +211,9 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     reader.onload = async (e) => {
       try {
         const json = JSON.parse(e.target?.result as string);
-        if (!json.data || !json.data.members) throw new Error('فرمت فایل نامعتبر است.');
+        const sourceData = json.data || json; // Support both wrapped and unwrapped JSON
+        
+        if (!sourceData || !sourceData.members) throw new Error('فرمت فایل نامعتبر است.');
 
         await Promise.all([
           dbService.clearStore(STORES.MEMBERS),
@@ -202,17 +222,16 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
           dbService.clearStore(STORES.INCOME),
         ]);
 
-        const { members: m, assets: a, debts: d, incomes: i } = json.data;
-        for (const item of m) await dbService.put(STORES.MEMBERS, item);
-        for (const item of a) await dbService.put(STORES.ASSETS, item);
-        for (const item of d) await dbService.put(STORES.DEBTS, item);
-        for (const item of i) await dbService.put(STORES.INCOME, item);
+        const { members: m, assets: a, debts: d, incomes: i } = sourceData;
+        for (const item of (m || [])) await dbService.put(STORES.MEMBERS, item);
+        for (const item of (a || [])) await dbService.put(STORES.ASSETS, item);
+        for (const item of (d || [])) await dbService.put(STORES.DEBTS, item);
+        for (const item of (i || [])) await dbService.put(STORES.INCOME, item);
 
         await onRefresh();
-        setImportStatus({ type: 'success', message: 'اطلاعات با موفقیت بازیابی شد.' });
-        setTimeout(() => setImportStatus({ type: null, message: '' }), 5000);
+        showStatus('success', 'تمام اطلاعات با موفقیت بازیابی شد.');
       } catch (err) {
-        setImportStatus({ type: 'error', message: 'خطا: ' + (err as Error).message });
+        showStatus('error', 'خطا در خواندن فایل: ' + (err as Error).message);
       }
     };
     reader.readAsText(pendingFile);
@@ -232,10 +251,14 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
       />
 
       {importStatus.type && (
-        <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 ${
-          importStatus.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'
+        <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 fixed top-4 left-4 right-4 z-[100] shadow-xl ${
+          importStatus.type === 'success' ? 'bg-green-600 text-white' : 
+          importStatus.type === 'error' ? 'bg-red-600 text-white' : 
+          'bg-indigo-600 text-white'
         }`}>
-          {importStatus.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+          {importStatus.type === 'success' ? <CheckCircle className="w-5 h-5" /> : 
+           importStatus.type === 'error' ? <AlertCircle className="w-5 h-5" /> : 
+           <Clock className="w-5 h-5 animate-spin" />}
           <p className="text-sm font-bold">{importStatus.message}</p>
         </div>
       )}
@@ -335,37 +358,37 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
             <div className="bg-indigo-600 p-2 rounded-xl">
               <Database className="text-white w-5 h-5" />
             </div>
-            <h3 className="text-lg font-black text-indigo-900">مدیریت داده‌ها</h3>
+            <h3 className="text-lg font-black text-indigo-900">مدیریت داده‌ها (بک‌آپ)</h3>
           </div>
           
           <p className="text-xs text-indigo-700/70 mb-6 leading-relaxed">
-            شما می‌توانید از اطلاعات خود نسخه پشتیبان بگیرید. اگر در گوشی اندرویدی دکمه "خروجی" عمل نکرد، از "کپی در حافظه" استفاده کنید.
+            اطلاعات شما فقط در این گوشی ذخیره می‌شود. برای جلوگیری از دست رفتن اطلاعات، حتماً نسخه پشتیبان تهیه کنید.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
             <button 
               onClick={handleExportData}
-              className="flex items-center justify-center gap-2 bg-white text-indigo-700 py-4 px-2 rounded-2xl font-bold shadow-sm border border-indigo-100 active:scale-95 transition-all"
+              className="flex flex-col items-center justify-center gap-2 bg-white text-indigo-700 py-6 px-2 rounded-2xl font-bold shadow-sm border border-indigo-100 active:scale-95 transition-all"
             >
-              <Download className="w-5 h-5" />
-              <span className="text-sm">خروجی داده</span>
+              <Share2 className="w-6 h-6" />
+              <span className="text-xs">خروجی و اشتراک</span>
             </button>
             
             <button 
               onClick={handleImportClick}
-              className="flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 px-2 rounded-2xl font-bold shadow-md active:scale-95 transition-all"
+              className="flex flex-col items-center justify-center gap-2 bg-indigo-600 text-white py-6 px-2 rounded-2xl font-bold shadow-md active:scale-95 transition-all"
             >
-              <Upload className="w-5 h-5" />
-              <span className="text-sm">وارد کردن فایل</span>
+              <Upload className="w-6 h-6" />
+              <span className="text-xs">وارد کردن فایل</span>
             </button>
           </div>
 
           <button 
             onClick={copyToClipboard}
-            className="w-full mt-4 flex items-center justify-center gap-2 bg-indigo-100 text-indigo-800 py-3 rounded-2xl font-bold active:scale-95 transition-all"
+            className="w-full mt-4 flex items-center justify-center gap-2 bg-indigo-100/50 text-indigo-800 py-3 rounded-2xl font-bold active:scale-95 transition-all"
           >
             <Copy className="w-4 h-4" />
-            <span className="text-xs">کپی کل داده‌ها در حافظه (روش کمکی)</span>
+            <span className="text-[10px]">کپی کل داده‌ها در حافظه (روش کمکی)</span>
           </button>
           
           <input 
@@ -375,10 +398,6 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
             accept=".json" 
             className="hidden" 
           />
-          
-          <p className="text-center text-[10px] text-indigo-400 mt-6">
-            پیشنهاد می‌شود به صورت دوره‌ای از داده‌های خود نسخه پشتیبان تهیه کنید.
-          </p>
         </div>
       </div>
     </div>
