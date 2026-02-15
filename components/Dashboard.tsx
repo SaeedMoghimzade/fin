@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Asset, Debt, Member, RecurringIncome, AppView } from '../types';
-import { formatCurrency } from '../utils/dateUtils';
+import { formatCurrency, toJalali } from '../utils/dateUtils';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -28,12 +28,14 @@ const Dashboard: React.FC<DashboardProps> = ({ members, assets, debts, incomes, 
   const totalMonthlyIncome = incomes.reduce((acc, curr) => acc + curr.amount, 0);
   
   const now = new Date();
+  const [currentJalaliYear, currentJalaliMonth] = toJalali(now);
+
   const currentMonthInstallments = debts.flatMap(d => 
     d.installments.filter(i => {
-      const dueDate = new Date(i.dueDate);
-      return i.status === 'PENDING' && 
-             dueDate.getMonth() === now.getMonth() && 
-             dueDate.getFullYear() === now.getFullYear();
+      const [instY, instM] = toJalali(i.dueDate);
+      // فیلتر بر اساس سال و ماه شمسی دقیق - شامل تمام وضعیت‌ها (پرداخت شده و نشده)
+      return instY === currentJalaliYear && 
+             instM === currentJalaliMonth;
     })
   );
 
@@ -44,7 +46,6 @@ const Dashboard: React.FC<DashboardProps> = ({ members, assets, debts, incomes, 
     <div className="space-y-6 pb-4">
       {/* Total Balance Card */}
       <div className="bg-gradient-to-br from-indigo-600 to-indigo-900 p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden">
-        
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-white/10 backdrop-blur-md p-3 rounded-2xl border border-white/10">
             <p className="text-[10px] text-indigo-100 opacity-70 mb-1">کل دارایی‌ها</p>
@@ -139,7 +140,7 @@ const Dashboard: React.FC<DashboardProps> = ({ members, assets, debts, incomes, 
             <span className="font-bold text-emerald-600">{formatCurrency(totalMonthlyIncome)}</span>
           </div>
           <div className="flex justify-between items-center text-sm">
-            <span className="text-gray-500">اقساط سررسید شده</span>
+            <span className="text-gray-500">کل اقساط این ماه</span>
             <span className="font-bold text-red-600">{formatCurrency(upcomingPayments)}</span>
           </div>
           <div className="pt-3 border-t border-gray-100 flex justify-between items-center">

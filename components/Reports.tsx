@@ -5,7 +5,7 @@ import { formatCurrency, getJalaliMonthYear, toJalali, addJalaliMonth } from '..
 import { dbService, STORES } from '../db';
 import ConfirmModal from './ConfirmModal';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle, Copy } from 'lucide-react';
 
 interface ReportsProps {
   members: Member[];
@@ -119,42 +119,58 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     const fileName = `finance_backup_${new Date().toISOString().split('T')[0]}.json`;
     const jsonString = JSON.stringify(backupData, null, 2);
 
-    // Try Share API first - Much better for Android/iOS
+    // Function to fallback to legacy download
+    const fallbackDownload = () => {
+      try {
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        setImportStatus({ type: 'error', message: 'خطا در ایجاد فایل دانلود.' });
+      }
+    };
+
+    // Try Share API first - Better for Android/iOS
     if (navigator.share) {
       try {
         const file = new File([jsonString], fileName, { type: 'application/json' });
-        // Check if file sharing is supported
+        // Many Android browsers fail here with "Permission Denied" if not strictly configured
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({
             files: [file],
             title: 'پشتیبان مدیریت مالی',
             text: 'فایل پشتیبان اطلاعات مالی خانواده'
           });
-          return; // Success
+          return;
         } else {
-          // If file sharing not supported but share is available, share as text
-          await navigator.share({
-            title: 'پشتیبان مدیریت مالی',
-            text: jsonString
-          });
+          // If file sharing not supported, fallback to traditional download
+          fallbackDownload();
           return;
         }
       } catch (err) {
         console.error('Sharing failed:', err);
-        // Fallback to legacy download if sharing fails
+        // If sharing failed (like Permission Denied), try regular download
+        fallbackDownload();
+        return;
       }
     }
 
-    // Legacy Web Download Fallback
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // Default to legacy download for desktop browsers
+    fallbackDownload();
+  };
+
+  const copyToClipboard = () => {
+    const backupData = JSON.stringify({ members, assets, debts, incomes });
+    navigator.clipboard.writeText(backupData).then(() => {
+      setImportStatus({ type: 'success', message: 'داده‌ها در حافظه کپی شدند. می‌توانید آن را جایی ذخیره کنید.' });
+      setTimeout(() => setImportStatus({ type: null, message: '' }), 3000);
+    });
   };
 
   const handleImportClick = () => {
@@ -323,7 +339,7 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
           </div>
           
           <p className="text-xs text-indigo-700/70 mb-6 leading-relaxed">
-            شما می‌توانید از تمام اطلاعات ثبت شده خود یک فایل پشتیبان بگیرید یا داده‌های قبلی خود را از طریق فایل بازیابی کنید.
+            شما می‌توانید از اطلاعات خود نسخه پشتیبان بگیرید. اگر در گوشی اندرویدی دکمه "خروجی" عمل نکرد، از "کپی در حافظه" استفاده کنید.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
@@ -343,6 +359,14 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
               <span className="text-sm">وارد کردن فایل</span>
             </button>
           </div>
+
+          <button 
+            onClick={copyToClipboard}
+            className="w-full mt-4 flex items-center justify-center gap-2 bg-indigo-100 text-indigo-800 py-3 rounded-2xl font-bold active:scale-95 transition-all"
+          >
+            <Copy className="w-4 h-4" />
+            <span className="text-xs">کپی کل داده‌ها در حافظه (روش کمکی)</span>
+          </button>
           
           <input 
             type="file" 
