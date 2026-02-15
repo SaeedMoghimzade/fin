@@ -5,7 +5,7 @@ import { formatCurrency, getJalaliMonthYear, toJalali, addJalaliMonth } from '..
 import { dbService, STORES } from '../db';
 import ConfirmModal from './ConfirmModal';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle, Copy, Share2, Loader2, X, ChevronDown } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, Download, Upload, Database, CheckCircle, Copy, Share2, Loader2, X, ChevronDown, ClipboardPaste } from 'lucide-react';
 
 interface ReportsProps {
   members: Member[];
@@ -33,12 +33,13 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pasteContent, setPasteContent] = useState('');
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error' | 'info' | null, message: string }>({ type: null, message: '' });
   
   const now = new Date();
   const todayISO = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 
-  // Generate mapping for months
   const targetMonths: string[] = [];
   const monthKeysToData: Record<string, string> = {};
   for (let i = -1; i <= 4; i++) {
@@ -87,7 +88,6 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     if (type !== 'info') setTimeout(() => setImportStatus({ type: null, message: '' }), duration);
   };
 
-  // Helper for old-school clipboard copy when Navigator API fails
   const fallbackCopyText = (text: string) => {
     const textArea = document.createElement("textarea");
     textArea.value = text;
@@ -108,9 +108,6 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
   };
 
   const handleExportData = async () => {
-    // CRITICAL: Do not call setImportStatus('info') before sharing. 
-    // State updates can sometimes break the "user gesture" chain in strict environments.
-    
     const backupData = JSON.stringify({
       version: '1.0',
       timestamp: new Date().toISOString(),
@@ -119,11 +116,9 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     
     const fileName = `finance_backup_${new Date().toISOString().split('T')[0]}.json`;
 
-    // 1. Try Sharing API
     if (navigator.share) {
       try {
         const file = new File([backupData], fileName, { type: 'application/json' });
-        // Attempt file share if supported
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({
             files: [file],
@@ -132,7 +127,6 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
           showStatus('success', 'فایل پشتیبان با موفقیت ارسال شد.');
           return;
         }
-        // Fallback to text share within the same gesture block
         await navigator.share({
           title: 'داده‌های پشتیبان',
           text: backupData
@@ -141,22 +135,17 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
         return;
       } catch (err: any) {
         if (err.name === 'AbortError') return;
-        console.warn("Share failed, trying clipboard...", err);
       }
     }
 
-    // 2. Try Clipboard API
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(backupData);
-        showStatus('success', 'داده‌ها در حافظه کپی شد (محدودیت سیستم‌عامل در اشتراک‌گذاری فایل).');
+        showStatus('success', 'داده‌ها در حافظه کپی شد.');
         return;
       }
-    } catch (err) {
-      console.warn("Clipboard API failed, trying fallback...", err);
-    }
+    } catch (err) {}
 
-    // 3. Last Resort: Hidden Textarea Copy
     if (fallbackCopyText(backupData)) {
       showStatus('success', 'داده‌ها در حافظه کپی شد.');
     } else {
@@ -184,6 +173,31 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     }
   };
 
+  const processImportData = async (jsonString: string) => {
+    try {
+      const json = JSON.parse(jsonString);
+      const sourceData = json.data || json; 
+      if (!sourceData || !sourceData.members) throw new Error('فرمت داده‌ها نامعتبر است.');
+      
+      await Promise.all([
+        dbService.clearStore(STORES.MEMBERS),
+        dbService.clearStore(STORES.ASSETS),
+        dbService.clearStore(STORES.DEBTS),
+        dbService.clearStore(STORES.INCOME),
+      ]);
+      for (const item of (sourceData.members || [])) await dbService.put(STORES.MEMBERS, item);
+      for (const item of (sourceData.assets || [])) await dbService.put(STORES.ASSETS, item);
+      for (const item of (sourceData.debts || [])) await dbService.put(STORES.DEBTS, item);
+      for (const item of (sourceData.incomes || [])) await dbService.put(STORES.INCOME, item);
+      await onRefresh();
+      showStatus('success', 'اطلاعات با موفقیت بازیابی شد.');
+      setShowPasteModal(false);
+      setPasteContent('');
+    } catch (err) {
+      showStatus('error', 'خطا در پردازش داده‌ها. لطفا مطمئن شوید متن را کامل کپی کرده‌اید.');
+    }
+  };
+
   const handleImportClick = () => fileInputRef.current?.click();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,29 +208,11 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
     event.target.value = '';
   };
 
-  const executeImport = async () => {
+  const executeFileImport = async () => {
     if (!pendingFile) return;
     const reader = new FileReader();
     reader.onload = async (e) => {
-      try {
-        const json = JSON.parse(e.target?.result as string);
-        const sourceData = json.data || json; 
-        if (!sourceData || !sourceData.members) throw new Error('فرمت نامعتبر');
-        await Promise.all([
-          dbService.clearStore(STORES.MEMBERS),
-          dbService.clearStore(STORES.ASSETS),
-          dbService.clearStore(STORES.DEBTS),
-          dbService.clearStore(STORES.INCOME),
-        ]);
-        for (const item of (sourceData.members || [])) await dbService.put(STORES.MEMBERS, item);
-        for (const item of (sourceData.assets || [])) await dbService.put(STORES.ASSETS, item);
-        for (const item of (sourceData.debts || [])) await dbService.put(STORES.DEBTS, item);
-        for (const item of (sourceData.incomes || [])) await dbService.put(STORES.INCOME, item);
-        await onRefresh();
-        showStatus('success', 'بازیابی شد.');
-      } catch (err) {
-        showStatus('error', 'خطا در بازیابی.');
-      }
+      await processImportData(e.target?.result as string);
     };
     reader.readAsText(pendingFile);
     setShowConfirm(false);
@@ -233,12 +229,43 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
         title="بازیابی داده‌ها"
         message="با تایید این عملیات، تمام اطلاعات فعلی شما پاک شده و اطلاعات فایل جایگزین آن خواهد شد."
         confirmText="تایید و جایگزینی"
-        onConfirm={executeImport}
+        onConfirm={executeFileImport}
         onCancel={() => setShowConfirm(false)}
       />
 
+      {/* Paste Data Modal */}
+      {showPasteModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md" onClick={() => setShowPasteModal(false)} />
+          <div className="relative bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h3 className="text-lg font-black text-gray-800 mb-2">وارد کردن دستی متن</h3>
+            <p className="text-[10px] text-gray-500 mb-4 leading-relaxed">متنی که قبلاً از بخش "خروجی" کپی کرده بودید را اینجا بچسبانید (Paste کنید).</p>
+            <textarea
+              value={pasteContent}
+              onChange={(e) => setPasteContent(e.target.value)}
+              placeholder='متن را اینجا قرار دهید (مثلا: {"version": "1.0", ...})'
+              className="w-full h-40 p-3 bg-gray-50 border border-gray-100 rounded-2xl text-[10px] dir-ltr outline-none focus:ring-2 focus:ring-indigo-500 mb-4 font-mono"
+            />
+            <div className="flex gap-3">
+              <button 
+                onClick={() => processImportData(pasteContent)}
+                className="flex-1 bg-indigo-600 text-white py-3 rounded-2xl font-bold shadow-lg shadow-indigo-100 active:scale-95 transition-all"
+              >
+                بازیابی اطلاعات
+              </button>
+              <button 
+                onClick={() => setShowPasteModal(false)}
+                className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-2xl font-bold active:scale-95 transition-all"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {importStatus.type && (
-        <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 fixed top-4 left-4 right-4 z-[100] shadow-2xl ${
+        <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 fixed top-4 left-4 right-4 z-[120] shadow-2xl ${
           importStatus.type === 'success' ? 'bg-green-600 text-white' : 
           importStatus.type === 'error' ? 'bg-red-600 text-white' : 
           'bg-indigo-700 text-white'
@@ -251,6 +278,7 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
         </div>
       )}
 
+      {/* Charts and Lists remains the same */}
       <div>
         <h3 className="text-lg font-bold mb-4">وضعیت بازپرداخت‌ها (بازه ۶ ماهه)</h3>
         <div className="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 h-80">
@@ -324,6 +352,7 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
             <h3 className="text-lg font-black text-gray-800">پشتیبان‌گیری داده‌ها</h3>
           </div>
           <p className="text-[11px] text-gray-500 mb-6 leading-relaxed">اطلاعات شما فقط روی این گوشی ذخیره شده است. حتماً خروجی گرفته و در جایی مطمئن ذخیره کنید.</p>
+          
           <div className="grid grid-cols-2 gap-4">
             <button onClick={handleExportData} className="flex flex-col items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-6 px-2 rounded-2xl font-bold border border-indigo-100 active:scale-95 transition-all">
               <Share2 className="w-6 h-6" />
@@ -334,10 +363,18 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
               <span className="text-xs">وارد کردن فایل</span>
             </button>
           </div>
-          <button onClick={copyToClipboard} className="w-full mt-4 flex items-center justify-center gap-2 bg-gray-50 text-gray-500 py-3 rounded-2xl font-bold active:scale-95 transition-all border border-dashed border-gray-200">
-            <Copy className="w-4 h-4" />
-            <span className="text-[10px]">کپی دستی داده‌ها</span>
-          </button>
+
+          <div className="grid grid-cols-2 gap-4 mt-4">
+            <button onClick={copyToClipboard} className="flex items-center justify-center gap-2 bg-gray-50 text-gray-500 py-4 rounded-2xl font-bold active:scale-95 transition-all border border-dashed border-gray-200">
+              <Copy className="w-4 h-4" />
+              <span className="text-[10px]">کپی داده‌ها</span>
+            </button>
+            <button onClick={() => setShowPasteModal(true)} className="flex items-center justify-center gap-2 bg-indigo-50 text-indigo-600 py-4 rounded-2xl font-bold active:scale-95 transition-all border border-dashed border-indigo-200">
+              <ClipboardPaste className="w-4 h-4" />
+              <span className="text-[10px]">وارد کردن متن</span>
+            </button>
+          </div>
+          
           <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".json" className="hidden" />
         </div>
       </div>
