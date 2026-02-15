@@ -109,18 +109,48 @@ const Reports: React.FC<ReportsProps> = ({ members, assets, debts, incomes, onRe
 
   const sortedMonthsForList = Object.keys(monthlyBreakdown).sort((a, b) => a.localeCompare(b));
 
-  const handleExportData = () => {
+  const handleExportData = async () => {
     const backupData = {
       version: '1.0',
       timestamp: new Date().toISOString(),
       data: { members, assets, debts, incomes }
     };
     
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const fileName = `finance_backup_${new Date().toISOString().split('T')[0]}.json`;
+    const jsonString = JSON.stringify(backupData, null, 2);
+
+    // Try Share API first - Much better for Android/iOS
+    if (navigator.share) {
+      try {
+        const file = new File([jsonString], fileName, { type: 'application/json' });
+        // Check if file sharing is supported
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: 'پشتیبان مدیریت مالی',
+            text: 'فایل پشتیبان اطلاعات مالی خانواده'
+          });
+          return; // Success
+        } else {
+          // If file sharing not supported but share is available, share as text
+          await navigator.share({
+            title: 'پشتیبان مدیریت مالی',
+            text: jsonString
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Sharing failed:', err);
+        // Fallback to legacy download if sharing fails
+      }
+    }
+
+    // Legacy Web Download Fallback
+    const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `finance_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
